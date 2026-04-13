@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-black text-white overflow-hidden;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0) scale(1); opacity: 0.3; }
+  50% { transform: translateY(-20px) scale(1.1); opacity: 0.6; }
+}
+
+@keyframes sweep {
+  0% { transform: translateX(-100%) skewX(-20deg); opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateX(200%) skewX(-20deg); opacity: 0; }
+}
+
+.particle {
+  @apply absolute rounded-full bg-white pointer-events-none;
+  animation: float 10s infinite ease-in-out;
+}
+
+.light-beam {
+  @apply absolute top-[-50%] bottom-[-50%] w-32 pointer-events-none;
+  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0.05), transparent);
+  filter: blur(20px);
+  animation: sweep 4s infinite ease-in-out;
+}
