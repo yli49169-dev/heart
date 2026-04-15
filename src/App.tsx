@@ -11,6 +11,7 @@ import {
   RotateCcw, 
   Trophy, 
   Shield, 
+  Search,
   Zap, 
   Info, 
   Gamepad2, 
@@ -36,7 +37,7 @@ const LEVEL_UP_SCORE = 1000;
 type GameState = 'START' | 'PLAYING' | 'PAUSED' | 'GAMEOVER' | 'SHOP';
 
 type Realm = 'HELL' | 'VOID' | 'ABYSS';
-type Difficulty = 'EASY' | 'NORMAL' | 'HARD' | 'NIGHTMARE' | 'COMPETITIVE';
+type Difficulty = 'EASY' | 'NORMAL' | 'ADVANCED' | 'EXPERT' | 'HARD';
 
 interface BackgroundSkin {
   id: string;
@@ -69,11 +70,11 @@ interface Skin {
   glowIntensity: number;
   isLotteryExclusive?: boolean;
   bulletColor?: string;
-  bulletShape?: 'RECT' | 'CIRCLE' | 'DIAMOND' | 'DRAGON' | 'CANNONBALL' | 'INK_DROP' | 'FIREBALL' | 'LOTUS_SEED';
+  bulletShape?: 'RECT' | 'CIRCLE' | 'DIAMOND' | 'DRAGON' | 'CANNONBALL' | 'INK_DROP' | 'FIREBALL' | 'LOTUS_SEED' | 'WIND_GUST';
   pattern?: 'NONE' | 'CLOUD' | 'DRAGON' | 'PHOENIX' | 'LOTUS' | 'WATERFALL' | 'WATERCOLOR' | 'PORCELAIN' | 'GEMSTONE';
-  shape?: 'DEFAULT' | 'DRAGON' | 'PHOENIX' | 'SWORD' | 'LANTERN' | 'PAGODA' | 'LOTUS_FLOWER' | 'BRAIN_CORE' | 'WARRIOR' | 'BEAST';
-  dynamicEffect?: 'NONE' | 'WATERFALL' | 'WATERCOLOR' | 'CRYSTAL' | 'NEON_PULSE' | 'FLAME' | 'GLOSS';
-  ability?: 'NONE' | 'BOMB' | 'SHIELD_REFLECT' | 'TIME_SLOW' | 'CHAIN_SHOT' | 'PHANTOM';
+  shape?: 'DEFAULT' | 'DRAGON' | 'PHOENIX' | 'SWORD' | 'LANTERN' | 'PAGODA' | 'LOTUS_FLOWER' | 'BRAIN_CORE' | 'WARRIOR' | 'BEAST' | 'BULLET_SHIP' | 'WIND_SPIRIT';
+  dynamicEffect?: 'NONE' | 'WATERFALL' | 'WATERCOLOR' | 'CRYSTAL' | 'NEON_PULSE' | 'FLAME' | 'GLOSS' | 'STORM';
+  ability?: 'NONE' | 'BOMB' | 'SHIELD_REFLECT' | 'TIME_SLOW' | 'CHAIN_SHOT' | 'PHANTOM' | 'TARGETED_STRIKE';
 }
 
 interface Achievement {
@@ -96,6 +97,8 @@ interface Entity extends Point {
 
 interface Player extends Entity {
   lives: number;
+  hp: number;
+  maxHp: number;
   score: number;
   level: number;
   defense: number; // Current defense rating (0-100)
@@ -128,6 +131,13 @@ interface PowerUp extends Entity {
   type: 'TRIPLE' | 'SHIELD' | 'TREASURE' | 'RAPID' | 'ARMOR';
 }
 
+interface Bomb extends Point {
+  vx: number;
+  vy: number;
+  targetId: string | null;
+  life: number;
+}
+
 interface Particle extends Point {
   vx: number;
   vy: number;
@@ -137,6 +147,197 @@ interface Particle extends Point {
 }
 
 // --- Game Logic ---
+
+// --- Components ---
+const SkinPreview = ({ skin, size = 60, onZoom }: { skin: Skin, size?: number, onZoom?: (s: Skin) => void }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, size, size);
+    ctx.save();
+    ctx.translate(size / 2, size / 2);
+    
+    // Draw logic adapted from main draw function
+    ctx.shadowBlur = skin.glowIntensity / 2;
+    ctx.shadowColor = skin.color;
+    ctx.fillStyle = skin.color;
+    
+    // Scale for preview
+    const scale = size / 80;
+    ctx.scale(scale, scale);
+
+    // Draw Ship Shape
+    ctx.beginPath();
+    if (skin.shape === 'DRAGON') {
+      ctx.moveTo(0, -30);
+      ctx.quadraticCurveTo(20, -10, 0, 30);
+      ctx.quadraticCurveTo(-20, -10, 0, -30);
+    } else if (skin.shape === 'PHOENIX') {
+      ctx.moveTo(0, -30);
+      ctx.lineTo(-25, 20);
+      ctx.lineTo(0, 5);
+      ctx.lineTo(25, 20);
+      ctx.closePath();
+    } else if (skin.shape === 'SWORD') {
+      ctx.moveTo(0, -35);
+      ctx.lineTo(-10, 0);
+      ctx.lineTo(-20, 25);
+      ctx.lineTo(0, 15);
+      ctx.lineTo(20, 25);
+      ctx.lineTo(10, 0);
+      ctx.closePath();
+    } else if (skin.shape === 'BULLET_SHIP') {
+      ctx.moveTo(0, -35);
+      ctx.quadraticCurveTo(20, -20, 20, 25);
+      ctx.lineTo(-20, 25);
+      ctx.quadraticCurveTo(-20, -20, 0, -35);
+      ctx.closePath();
+    } else if (skin.shape === 'WIND_SPIRIT') {
+      for(let i=0; i<3; i++) {
+        ctx.beginPath();
+        ctx.arc(0, 0, 15 - i*5, 0, Math.PI * 1.5);
+        ctx.stroke();
+      }
+    } else {
+      ctx.moveTo(0, -25);
+      ctx.lineTo(-25, 25);
+      ctx.lineTo(25, 25);
+      ctx.closePath();
+    }
+    ctx.fill();
+
+    // Cockpit
+    ctx.fillStyle = 'white';
+    ctx.beginPath();
+    ctx.ellipse(0, -5, 6, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }, [skin, size]);
+
+  return (
+    <div 
+      onClick={() => onZoom?.(skin)}
+      className="relative group cursor-pointer overflow-hidden rounded-xl bg-white/5 border border-white/10 hover:border-blue-500/50 transition-all"
+    >
+      <canvas ref={canvasRef} width={size} height={size} className="mx-auto" />
+      <div className="absolute inset-0 bg-blue-500/0 group-hover:bg-blue-500/10 transition-colors flex items-center justify-center">
+        <Search className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+      </div>
+    </div>
+  );
+};
+
+const SkinZoomModal = ({ skin, onClose }: { skin: Skin, onClose: () => void }) => {
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <motion.div 
+        initial={{ scale: 0.8, y: 20 }}
+        animate={{ scale: 1, y: 0 }}
+        className="bg-slate-900 border border-white/10 p-8 rounded-3xl max-w-lg w-full relative overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-blue-500 to-transparent" />
+        
+        <button 
+          onClick={onClose}
+          className="absolute top-4 right-4 p-2 hover:bg-white/10 rounded-full transition-colors"
+        >
+          <RotateCcw className="w-5 h-5 text-slate-400" />
+        </button>
+
+        <div className="flex flex-col items-center gap-6">
+          <div className="relative">
+            <div className="absolute inset-0 bg-blue-500/20 blur-3xl rounded-full" />
+            <SkinPreview skin={skin} size={200} />
+          </div>
+
+          <div className="text-center">
+            <h2 className="text-3xl font-black mb-2">{skin.name}</h2>
+            <div className="flex justify-center gap-2 mb-4">
+              <span className={`px-3 py-1 rounded-full text-xs font-black ${
+                skin.tier === 'MYTHIC' ? 'bg-red-600 text-white' :
+                skin.tier === 'LEGENDARY' ? 'bg-purple-600 text-white' :
+                skin.tier === 'EPIC' ? 'bg-blue-600 text-white' : 'bg-slate-600 text-white'
+              }`}>
+                {skin.tier}
+              </span>
+              {skin.ability && (
+                <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  {skin.ability === 'BOMB' ? '自爆弹' : 
+                   skin.ability === 'SHIELD_REFLECT' ? '防御反弹' : 
+                   skin.ability === 'TIME_SLOW' ? '时空扭曲' : 
+                   skin.ability === 'CHAIN_SHOT' ? '连锁射击' : 
+                   skin.ability === 'TARGETED_STRIKE' ? '精准打击' :
+                   skin.ability === 'PHANTOM' ? '幽灵闪避' : skin.ability}
+                </span>
+              )}
+            </div>
+            <p className="text-slate-400 text-sm leading-relaxed">
+              这款战机采用了先进的 {
+                skin.pattern === 'CLOUD' ? '云纹' : 
+                skin.pattern === 'DRAGON' ? '龙纹' : 
+                skin.pattern === 'PHOENIX' ? '凤纹' : 
+                skin.pattern === 'LOTUS' ? '莲纹' : 
+                skin.pattern === 'WATERFALL' ? '瀑布纹' : 
+                skin.pattern === 'WATERCOLOR' ? '水彩纹' : 
+                skin.pattern === 'PORCELAIN' ? '青花瓷' : 
+                skin.pattern === 'GEMSTONE' ? '宝石纹' : '标准'
+              } 纹理工艺，并搭载了 {
+                skin.dynamicEffect === 'WATERFALL' ? '瀑布' : 
+                skin.dynamicEffect === 'WATERCOLOR' ? '水彩' : 
+                skin.dynamicEffect === 'CRYSTAL' ? '晶体' : 
+                skin.dynamicEffect === 'FLAME' ? '火焰' :
+                skin.dynamicEffect === 'GLOSS' ? '光泽' :
+                skin.dynamicEffect === 'STORM' ? '风暴' : 
+                skin.dynamicEffect === 'NEON_PULSE' ? '霓虹' : '标准'
+              } 动力核心。
+              其独特的 {
+                skin.shape === 'DRAGON' ? '神龙' : 
+                skin.shape === 'PHOENIX' ? '凤凰' : 
+                skin.shape === 'SWORD' ? '利剑' : 
+                skin.shape === 'LANTERN' ? '灯笼' : 
+                skin.shape === 'PAGODA' ? '宝塔' : 
+                skin.shape === 'LOTUS_FLOWER' ? '莲花' : 
+                skin.shape === 'BRAIN_CORE' ? '核心' : 
+                skin.shape === 'WARRIOR' ? '战士' : 
+                skin.shape === 'BEAST' ? '猛兽' : 
+                skin.shape === 'BULLET_SHIP' ? '子弹' : 
+                skin.shape === 'WIND_SPIRIT' ? '风灵' : '标准'
+              } 气动布局使其在战场上无往不利。
+            </p>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4 w-full mt-4">
+            <div className="bg-white/5 p-3 rounded-xl border border-white/5 text-center">
+              <div className="text-[10px] text-slate-500 uppercase font-bold">防御</div>
+              <div className="text-lg font-bold text-blue-400">+{skin.defenseBonus}</div>
+            </div>
+            <div className="bg-white/5 p-3 rounded-xl border border-white/5 text-center">
+              <div className="text-[10px] text-slate-500 uppercase font-bold">机动</div>
+              <div className="text-lg font-bold text-green-400">x{skin.speedMultiplier}</div>
+            </div>
+            <div className="bg-white/5 p-3 rounded-xl border border-white/5 text-center">
+              <div className="text-[10px] text-slate-500 uppercase font-bold">火力</div>
+              <div className="text-lg font-bold text-red-400">{skin.bulletWidth}</div>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
 
 export default function App() {
   const [gameState, setGameState] = useState<GameState>('START');
@@ -160,23 +361,23 @@ export default function App() {
   const [skins, setSkins] = useState<Skin[]>(() => {
     const defaultSkins: Skin[] = [
       // --- GREEN TIER (COMMON/RARE) ---
-      { id: 'default', name: '先锋号', tier: 'COMMON', price: 0, unlocked: true, bulletWidth: 10, hasDualShip: false, defenseBonus: 10, speedMultiplier: 1.0, trailColor: '#22c55e', color: '#22c55e', glowIntensity: 10, pattern: 'NONE', bulletShape: 'CANNONBALL', shape: 'DEFAULT' },
+      { id: 'default', name: '星标', tier: 'COMMON', price: 0, unlocked: true, bulletWidth: 10, hasDualShip: false, defenseBonus: 10, speedMultiplier: 1.0, trailColor: '#22c55e', color: '#22c55e', glowIntensity: 10, pattern: 'CLOUD', bulletShape: 'CANNONBALL', shape: 'DEFAULT' },
       { id: 'storm_bringer', name: '唤雨者', tier: 'RARE', price: 3000, unlocked: false, bulletWidth: 12, hasDualShip: false, defenseBonus: 25, speedMultiplier: 1.2, trailColor: '#4ade80', color: '#4ade80', glowIntensity: 20, pattern: 'CLOUD', dynamicEffect: 'WATERFALL', bulletShape: 'CANNONBALL', shape: 'DEFAULT' },
-      { id: 'bamboo_shadow', name: '竹影', tier: 'RARE', price: 1800, unlocked: false, bulletWidth: 10, hasDualShip: false, defenseBonus: 15, speedMultiplier: 1.7, trailColor: '#16a34a', color: '#16a34a', glowIntensity: 20, shape: 'SWORD', pattern: 'CLOUD', bulletShape: 'CANNONBALL' },
+      { id: 'bamboo_shadow', name: '竹影', tier: 'RARE', price: 1800, unlocked: false, bulletWidth: 10, hasDualShip: false, defenseBonus: 15, speedMultiplier: 1.7, trailColor: '#16a34a', color: '#16a34a', glowIntensity: 20, shape: 'SWORD', pattern: 'LOTUS', bulletShape: 'CANNONBALL' },
       { id: 'wood_spirit', name: '森之灵', tier: 'RARE', price: 1300, unlocked: false, bulletWidth: 10, hasDualShip: false, defenseBonus: 30, speedMultiplier: 1.1, trailColor: '#15803d', color: '#15803d', glowIntensity: 15, shape: 'BEAST', pattern: 'LOTUS', bulletShape: 'CANNONBALL' },
 
       // --- BLUE TIER (EPIC) ---
-      { id: 'dual', name: '双子星', tier: 'EPIC', price: 2500, unlocked: false, bulletWidth: 12, hasDualShip: true, defenseBonus: 25, speedMultiplier: 1.2, trailColor: '#3b82f6', color: '#3b82f6', glowIntensity: 25, pattern: 'NONE', bulletShape: 'CANNONBALL', shape: 'DEFAULT' },
+      { id: 'dual', name: '双子星', tier: 'EPIC', price: 2500, unlocked: false, bulletWidth: 12, hasDualShip: true, defenseBonus: 25, speedMultiplier: 1.2, trailColor: '#3b82f6', color: '#3b82f6', glowIntensity: 25, pattern: 'GEMSTONE', bulletShape: 'CANNONBALL', shape: 'DEFAULT' },
       { id: 'jade_dragon', name: '青玉龙', tier: 'EPIC', price: 6000, unlocked: false, bulletWidth: 14, hasDualShip: false, defenseBonus: 40, speedMultiplier: 1.1, trailColor: '#60a5fa', color: '#60a5fa', glowIntensity: 35, pattern: 'DRAGON', bulletShape: 'DRAGON', dynamicEffect: 'WATERFALL', shape: 'DRAGON' },
       { id: 'lotus_spirit', name: '莲华', tier: 'EPIC', price: 5500, unlocked: false, bulletWidth: 12, hasDualShip: false, defenseBonus: 45, speedMultiplier: 0.9, trailColor: '#93c5fd', color: '#93c5fd', glowIntensity: 30, pattern: 'LOTUS', shape: 'LOTUS_FLOWER', dynamicEffect: 'WATERFALL' },
       { id: 'crystal_core', name: '晶核', tier: 'EPIC', price: 6500, unlocked: false, bulletWidth: 16, hasDualShip: false, defenseBonus: 30, speedMultiplier: 1.1, trailColor: '#2563eb', color: '#2563eb', glowIntensity: 40, dynamicEffect: 'CRYSTAL', pattern: 'GEMSTONE', shape: 'BRAIN_CORE' },
-      { id: 'jade_sword', name: '青玉神剑', tier: 'EPIC', price: 5800, unlocked: false, bulletWidth: 12, hasDualShip: false, defenseBonus: 30, speedMultiplier: 1.6, trailColor: '#3b82f6', color: '#3b82f6', glowIntensity: 40, shape: 'SWORD', pattern: 'NONE', bulletShape: 'DIAMOND' },
+      { id: 'jade_sword', name: '青玉神剑', tier: 'EPIC', price: 5800, unlocked: false, bulletWidth: 12, hasDualShip: false, defenseBonus: 30, speedMultiplier: 1.6, trailColor: '#3b82f6', color: '#3b82f6', glowIntensity: 40, shape: 'SWORD', pattern: 'WATERCOLOR', bulletShape: 'DIAMOND' },
 
       // --- PURPLE TIER (LEGENDARY) ---
-      { id: 'phantom', name: '幽灵之影', tier: 'LEGENDARY', price: 5000, unlocked: false, bulletWidth: 14, hasDualShip: false, defenseBonus: 15, speedMultiplier: 1.5, trailColor: '#a855f7', color: '#a855f7', glowIntensity: 30, pattern: 'NONE', bulletShape: 'DIAMOND', shape: 'WARRIOR' },
-      { id: 'void_reaper', name: '虚空收割者', tier: 'LEGENDARY', price: 15000, unlocked: false, bulletWidth: 20, hasDualShip: true, defenseBonus: 60, speedMultiplier: 1.3, trailColor: '#d946ef', color: '#d946ef', glowIntensity: 50, pattern: 'NONE', dynamicEffect: 'NEON_PULSE', shape: 'BEAST' },
+      { id: 'phantom', name: '幽灵之影', tier: 'LEGENDARY', price: 5000, unlocked: false, bulletWidth: 14, hasDualShip: false, defenseBonus: 15, speedMultiplier: 1.5, trailColor: '#a855f7', color: '#a855f7', glowIntensity: 30, pattern: 'CLOUD', bulletShape: 'DIAMOND', shape: 'WARRIOR' },
+      { id: 'void_reaper', name: '虚空收割者', tier: 'LEGENDARY', price: 15000, unlocked: false, bulletWidth: 20, hasDualShip: true, defenseBonus: 60, speedMultiplier: 1.3, trailColor: '#d946ef', color: '#d946ef', glowIntensity: 50, pattern: 'DRAGON', dynamicEffect: 'NEON_PULSE', shape: 'BEAST' },
       { id: 'golden_phoenix', name: '金凤凰', tier: 'LEGENDARY', price: 12000, unlocked: false, bulletWidth: 18, hasDualShip: true, defenseBonus: 30, speedMultiplier: 1.4, trailColor: '#c084fc', color: '#c084fc', glowIntensity: 60, pattern: 'PHOENIX', shape: 'PHOENIX', dynamicEffect: 'WATERFALL' },
-      { id: 'mystic_crane', name: '玄鹤', tier: 'LEGENDARY', price: 13000, unlocked: false, bulletWidth: 16, hasDualShip: true, defenseBonus: 30, speedMultiplier: 1.5, trailColor: '#e879f9', color: '#e879f9', glowIntensity: 60, shape: 'PHOENIX', pattern: 'CLOUD', dynamicEffect: 'WATERFALL' },
+      { id: 'mystic_crane', name: '玄鹤', tier: 'LEGENDARY', price: 13000, unlocked: false, bulletWidth: 16, hasDualShip: true, defenseBonus: 30, speedMultiplier: 1.5, trailColor: '#e879f9', color: '#e879f9', glowIntensity: 60, shape: 'PHOENIX', pattern: 'PHOENIX', dynamicEffect: 'WATERFALL' },
 
       // --- RED TIER (MYTHIC - UNIQUE ABILITIES) ---
       { 
@@ -212,7 +413,7 @@ export default function App() {
         speedMultiplier: 1.1, 
         trailColor: '#dc2626', 
         color: '#dc2626', 
-        glowIntensity: 110, 
+        glowIntensity: 100, 
         isLotteryExclusive: true, 
         shape: 'DRAGON', 
         pattern: 'WATERFALL', 
@@ -232,7 +433,7 @@ export default function App() {
         speedMultiplier: 1.3, 
         trailColor: '#f43f5e', 
         color: '#f43f5e', 
-        glowIntensity: 120, 
+        glowIntensity: 100, 
         isLotteryExclusive: true, 
         shape: 'LOTUS_FLOWER', 
         pattern: 'PORCELAIN', 
@@ -253,7 +454,7 @@ export default function App() {
         speedMultiplier: 1.2, 
         trailColor: '#ef4444', 
         color: '#ef4444', 
-        glowIntensity: 130, 
+        glowIntensity: 100, 
         isLotteryExclusive: true, 
         pattern: 'DRAGON', 
         bulletShape: 'FIREBALL', 
@@ -276,21 +477,108 @@ export default function App() {
         color: '#991B1B', 
         glowIntensity: 85, 
         isLotteryExclusive: true, 
-        pattern: 'NONE', 
+        pattern: 'DRAGON', 
         bulletShape: 'DIAMOND', 
         bulletColor: '#EF4444', 
         dynamicEffect: 'NEON_PULSE',
         shape: 'BEAST',
         ability: 'PHANTOM'
       },
+      { 
+        id: 'bullet_strike', 
+        name: '穿甲弹头', 
+        tier: 'MYTHIC', 
+        price: 0, 
+        unlocked: false, 
+        bulletWidth: 20, 
+        hasDualShip: false, 
+        defenseBonus: 60, 
+        speedMultiplier: 1.5, 
+        trailColor: '#94a3b8', 
+        color: '#64748b', 
+        glowIntensity: 70, 
+        isLotteryExclusive: true, 
+        pattern: 'GEMSTONE', 
+        bulletShape: 'RECT', 
+        bulletColor: '#facc15', 
+        dynamicEffect: 'GLOSS',
+        shape: 'BULLET_SHIP',
+        ability: 'TARGETED_STRIKE'
+      },
+      { 
+        id: 'ancient_wind', 
+        name: '古风青岚', 
+        tier: 'MYTHIC', 
+        price: 0, 
+        unlocked: false, 
+        bulletWidth: 22, 
+        hasDualShip: true, 
+        defenseBonus: 70, 
+        speedMultiplier: 1.4, 
+        trailColor: '#10b981', 
+        color: '#059669', 
+        glowIntensity: 90, 
+        isLotteryExclusive: true, 
+        pattern: 'CLOUD', 
+        bulletShape: 'WIND_GUST', 
+        bulletColor: '#34d399', 
+        dynamicEffect: 'WATERCOLOR',
+        shape: 'WIND_SPIRIT',
+        ability: 'PHANTOM'
+      },
+      { 
+        id: 'obsidian_mirror', 
+        name: '黑曜之镜', 
+        tier: 'MYTHIC', 
+        price: 0, 
+        unlocked: false, 
+        bulletWidth: 24, 
+        hasDualShip: true, 
+        defenseBonus: 95, 
+        speedMultiplier: 1.25, 
+        trailColor: '#1e293b', 
+        color: '#0f172a', 
+        glowIntensity: 100, 
+        isLotteryExclusive: true, 
+        pattern: 'GEMSTONE', 
+        bulletShape: 'DIAMOND', 
+        bulletColor: '#334155', 
+        dynamicEffect: 'CRYSTAL',
+        shape: 'SWORD',
+        ability: 'SHIELD_REFLECT'
+      },
+      // --- NEW 15 SKINS ---
+      { id: 'wind_god', name: '风神', tier: 'MYTHIC', price: 0, unlocked: false, bulletWidth: 22, hasDualShip: true, defenseBonus: 70, speedMultiplier: 1.8, trailColor: '#10b981', color: '#10b981', glowIntensity: 100, isLotteryExclusive: true, pattern: 'CLOUD', dynamicEffect: 'STORM', shape: 'WIND_SPIRIT', ability: 'PHANTOM' },
+      { id: 'solar_flare', name: '太阳耀斑', tier: 'LEGENDARY', price: 18000, unlocked: false, bulletWidth: 18, hasDualShip: false, defenseBonus: 40, speedMultiplier: 1.3, trailColor: '#f59e0b', color: '#f59e0b', glowIntensity: 80, pattern: 'GEMSTONE', dynamicEffect: 'FLAME', shape: 'PHOENIX' },
+      { id: 'lunar_shadow', name: '月影', tier: 'LEGENDARY', price: 17000, unlocked: false, bulletWidth: 16, hasDualShip: false, defenseBonus: 50, speedMultiplier: 1.4, trailColor: '#94a3b8', color: '#94a3b8', glowIntensity: 70, pattern: 'CLOUD', dynamicEffect: 'GLOSS', shape: 'WARRIOR' },
+      { id: 'star_dust', name: '星尘', tier: 'RARE', price: 2500, unlocked: false, bulletWidth: 12, hasDualShip: false, defenseBonus: 20, speedMultiplier: 1.2, trailColor: '#cbd5e1', color: '#cbd5e1', glowIntensity: 30, pattern: 'NONE', shape: 'DEFAULT' },
+      { id: 'nebula_knight', name: '星云骑士', tier: 'EPIC', price: 7500, unlocked: false, bulletWidth: 14, hasDualShip: false, defenseBonus: 35, speedMultiplier: 1.3, trailColor: '#8b5cf6', color: '#8b5cf6', glowIntensity: 50, pattern: 'GEMSTONE', shape: 'SWORD' },
+      { id: 'void_walker', name: '虚空行者', tier: 'EPIC', price: 8000, unlocked: false, bulletWidth: 15, hasDualShip: false, defenseBonus: 40, speedMultiplier: 1.4, trailColor: '#6366f1', color: '#6366f1', glowIntensity: 55, pattern: 'CLOUD', shape: 'WARRIOR' },
+      { id: 'crystal_guardian', name: '水晶卫士', tier: 'RARE', price: 3500, unlocked: false, bulletWidth: 12, hasDualShip: false, defenseBonus: 45, speedMultiplier: 1.0, trailColor: '#38bdf8', color: '#38bdf8', glowIntensity: 40, pattern: 'GEMSTONE', shape: 'DEFAULT' },
+      { id: 'inferno', name: '地狱火', tier: 'LEGENDARY', price: 19000, unlocked: false, bulletWidth: 20, hasDualShip: false, defenseBonus: 30, speedMultiplier: 1.5, trailColor: '#ef4444', color: '#ef4444', glowIntensity: 90, pattern: 'NONE', dynamicEffect: 'FLAME', shape: 'BEAST' },
+      { id: 'frost_bite', name: '霜咬', tier: 'RARE', price: 4000, unlocked: false, bulletWidth: 13, hasDualShip: false, defenseBonus: 35, speedMultiplier: 1.1, trailColor: '#0ea5e9', color: '#0ea5e9', glowIntensity: 35, pattern: 'GEMSTONE', shape: 'DEFAULT' },
+      { id: 'thunder_bolt', name: '雷霆', tier: 'EPIC', price: 9000, unlocked: false, bulletWidth: 16, hasDualShip: false, defenseBonus: 25, speedMultiplier: 1.6, trailColor: '#facc15', color: '#facc15', glowIntensity: 60, pattern: 'GEMSTONE', shape: 'SWORD' },
+      { id: 'gaia', name: '盖亚', tier: 'RARE', price: 4500, unlocked: false, bulletWidth: 14, hasDualShip: false, defenseBonus: 50, speedMultiplier: 0.9, trailColor: '#10b981', color: '#10b981', glowIntensity: 30, pattern: 'LOTUS', shape: 'DEFAULT' },
+      { id: 'aether', name: '以太', tier: 'EPIC', price: 10000, unlocked: false, bulletWidth: 15, hasDualShip: true, defenseBonus: 30, speedMultiplier: 1.3, trailColor: '#d946ef', color: '#d946ef', glowIntensity: 65, pattern: 'PHOENIX', shape: 'PHOENIX' },
+      { id: 'chrono', name: '时空', tier: 'LEGENDARY', price: 20000, unlocked: false, bulletWidth: 18, hasDualShip: false, defenseBonus: 45, speedMultiplier: 1.4, trailColor: '#6366f1', color: '#6366f1', glowIntensity: 85, pattern: 'GEMSTONE', dynamicEffect: 'NEON_PULSE', shape: 'BRAIN_CORE' },
+      { id: 'zenith', name: '天顶', tier: 'EPIC', price: 11000, unlocked: false, bulletWidth: 16, hasDualShip: false, defenseBonus: 40, speedMultiplier: 1.5, trailColor: '#f43f5e', color: '#f43f5e', glowIntensity: 70, pattern: 'PHOENIX', shape: 'PHOENIX' },
+      { id: 'eclipse', name: '日食', tier: 'LEGENDARY', price: 21000, unlocked: false, bulletWidth: 19, hasDualShip: true, defenseBonus: 55, speedMultiplier: 1.2, trailColor: '#475569', color: '#475569', glowIntensity: 95, pattern: 'GEMSTONE', dynamicEffect: 'GLOSS', shape: 'WARRIOR' },
     ];
     
+    // Sanity check for duplicate IDs
+    const seen = new Set();
+    const uniqueSkins = defaultSkins.filter(s => {
+      if (seen.has(s.id)) return false;
+      seen.add(s.id);
+      return true;
+    });
+
     const saved = localStorage.getItem('tina_unlocked_skins');
     if (saved) {
       const unlockedIds = JSON.parse(saved);
-      return defaultSkins.map(s => ({ ...s, unlocked: unlockedIds.includes(s.id) || s.id === 'default' }));
+      return uniqueSkins.map(s => ({ ...s, unlocked: unlockedIds.includes(s.id) || s.id === 'default' }));
     }
-    return defaultSkins.map(s => ({ ...s, unlocked: s.id === 'default' }));
+    return uniqueSkins.map(s => ({ ...s, unlocked: s.id === 'default' }));
   });
 
   const [activeSkinId, setActiveSkinId] = useState(() => {
@@ -308,6 +596,7 @@ export default function App() {
     const saved = localStorage.getItem('tina_active_button');
     return (saved as ButtonSkin['style']) || 'DEFAULT';
   });
+  const [zoomedSkin, setZoomedSkin] = useState<Skin | null>(null);
 
   const [backgrounds, setBackgrounds] = useState<BackgroundSkin[]>(() => {
     const defaults: BackgroundSkin[] = [
@@ -412,6 +701,8 @@ export default function App() {
     width: 50,
     height: 50,
     lives: 3,
+    hp: 100,
+    maxHp: 100,
     score: 0,
     level: 1,
     defense: activeSkin.defenseBonus,
@@ -424,6 +715,7 @@ export default function App() {
   });
 
   const bulletsRef = useRef<Bullet[]>([]);
+  const bombsRef = useRef<Bomb[]>([]);
   const enemiesRef = useRef<Enemy[]>([]);
   const powerUpsRef = useRef<PowerUp[]>([]);
   const particlesRef = useRef<Particle[]>([]);
@@ -503,16 +795,26 @@ export default function App() {
     const types: Enemy['type'][] = ['BASIC', 'FAST', 'HEAVY', 'SNIPER', 'TANK', 'ELITE'];
     const type = types[Math.floor(Math.random() * Math.min(level, 6))];
     
-    let hp = 1;
-    let speedMultiplier = difficulty === 'EASY' ? 0.7 : (difficulty === 'HARD' ? 1.1 : (difficulty === 'NIGHTMARE' ? 1.4 : 1));
+    // Difficulty Scaling
+    let speedMultiplier = 1;
+    switch (difficulty) {
+      case 'EASY': speedMultiplier = 0.7; break;
+      case 'NORMAL': speedMultiplier = 1.0; break;
+      case 'ADVANCED': speedMultiplier = 1.3; break;
+      case 'EXPERT': speedMultiplier = 1.6; break;
+      case 'HARD': speedMultiplier = 2.0; break;
+    }
     
+    let hp = 1;
+    // Difficulty: Focus on HP rather than speed
+    if (difficulty === 'NORMAL') hp = Math.floor(level / 5) + 1;
+    if (difficulty === 'ADVANCED') hp = Math.floor(level / 4) + 3;
+    if (difficulty === 'EXPERT') hp = Math.floor(level / 3) + 6;
+    if (difficulty === 'HARD') hp = Math.floor(level / 2) + 10;
+
     // Realm Difficulty Scaling
     const realmMultiplier = currentRealm === 'VOID' ? 1.2 : (currentRealm === 'ABYSS' ? 1.4 : 1);
     let speed = (ENEMY_BASE_SPEED + (level * 0.1)) * speedMultiplier * realmMultiplier;
-    
-    // Difficulty: Focus on HP rather than speed
-    if (difficulty === 'HARD') hp = Math.floor(level / 3) + 2;
-    if (difficulty === 'NIGHTMARE') hp = Math.floor(level / 2) + 5;
 
     if (type === 'HEAVY') { hp *= 3; speed *= 0.6; }
     if (type === 'TANK') { hp *= 8; speed *= 0.4; }
@@ -591,6 +893,7 @@ export default function App() {
       skinId: activeSkinId,
     };
     bulletsRef.current = [];
+    bombsRef.current = [];
     enemiesRef.current = [];
     powerUpsRef.current = [];
     particlesRef.current = [];
@@ -676,10 +979,75 @@ export default function App() {
       }
     }
 
+    // Bomb Launching (Key 'b' or 'Space' if not shooting)
+    if (keysRef.current.has('b') && frameCountRef.current % 60 === 0) {
+      bombsRef.current.push({
+        x: player.x + player.width / 2,
+        y: player.y,
+        vx: 0,
+        vy: -5,
+        targetId: null,
+        life: 1.0
+      });
+    }
+
     // Update Stars
     starsRef.current.forEach(star => {
       star.y += star.speed;
       if (star.y > CANVAS_HEIGHT) star.y = 0;
+    });
+
+    // Update Bombs
+    bombsRef.current = bombsRef.current.filter(b => {
+      // Find closest enemy
+      let closestEnemy: any = null;
+      let minDist = 300; // Tracking range
+
+      enemiesRef.current.forEach(e => {
+        const dist = Math.sqrt((e.x - b.x)**2 + (e.y - b.y)**2);
+        if (dist < minDist) {
+          minDist = dist;
+          closestEnemy = e;
+        }
+      });
+
+      if (closestEnemy) {
+        const angle = Math.atan2(closestEnemy.y - b.y, closestEnemy.x - b.x);
+        b.vx += Math.cos(angle) * 0.5;
+        b.vy += Math.sin(angle) * 0.5;
+        
+        // Cap speed
+        const speed = Math.sqrt(b.vx**2 + b.vy**2);
+        if (speed > 8) {
+          b.vx = (b.vx / speed) * 8;
+          b.vy = (b.vy / speed) * 8;
+        }
+
+        // Instant Kill on contact (within 20 units as requested)
+        if (minDist < 20) {
+          closestEnemy.hp = 0; // Instant kill
+          createExplosion(b.x, b.y, '#facc15', 60);
+          return false;
+        }
+      }
+
+      b.x += b.vx;
+      b.y += b.vy;
+      
+      // Particle trail
+      if (frameCountRef.current % 3 === 0) {
+        particlesRef.current.push({
+          x: b.x,
+          y: b.y,
+          vx: (Math.random() - 0.5) * 2,
+          vy: (Math.random() - 0.5) * 2,
+          life: 0.3,
+          color: '#facc15',
+          size: 4
+        });
+      }
+
+      return b.y > 0 && b.y < CANVAS_HEIGHT && b.x > 0 && b.x < CANVAS_WIDTH;
     });
 
     // Update Bullets
@@ -717,19 +1085,26 @@ export default function App() {
           player.hasShield = false;
           createExplosion(player.x + player.width / 2, player.y + player.height / 2, '#60a5fa', 30);
         } else {
-          // Attack power multiplied by 5 as requested
-          const damage = difficulty === 'COMPETITIVE' ? 5 : 1;
-          player.lives -= damage;
-          setLives(Math.max(0, player.lives));
+          // Attack power based on difficulty
+          let damage = 5;
+          switch (difficulty) {
+            case 'EASY': damage = 2; break;
+            case 'NORMAL': damage = 5; break;
+            case 'ADVANCED': damage = 10; break;
+            case 'EXPERT': damage = 15; break;
+            case 'HARD': damage = 25; break;
+          }
+          player.hp -= damage;
+          setLives(Math.max(0, Math.ceil(player.hp / 33.3))); // Keep lives as a visual indicator or remove
           player.isInvincible = true;
           player.invincibleUntil = now + INVINCIBILITY_DURATION;
           createExplosion(player.x + player.width / 2, player.y + player.height / 2, '#ef4444', 30);
           triggerShake();
-          if (player.lives <= 0) {
+          if (player.hp <= 0) {
             setGameState('GAMEOVER');
             
-            // Competitive Mode Rewards
-            if (difficulty === 'COMPETITIVE' && level >= 30) {
+            // Hard Mode Rewards
+            if (difficulty === 'HARD' && level >= 30) {
               let earnedTickets = 2; // Base for 30 rounds
               earnedTickets += Math.floor((level - 30) / 10) * 2; // 2 more every 10 levels
               setTickets(prev => prev + earnedTickets);
@@ -815,14 +1190,22 @@ export default function App() {
           unlockAchievement('shield_master');
           createExplosion(player.x + player.width / 2, player.y + player.height / 2, '#60a5fa', 30);
         } else {
-          player.lives--;
-          setLives(player.lives);
+          let damage = 10;
+          switch (difficulty) {
+            case 'EASY': damage = 5; break;
+            case 'NORMAL': damage = 10; break;
+            case 'ADVANCED': damage = 20; break;
+            case 'EXPERT': damage = 35; break;
+            case 'HARD': damage = 50; break;
+          }
+          player.hp -= damage;
+          setLives(Math.max(0, Math.ceil(player.hp / 33.3)));
           player.isInvincible = true;
           player.invincibleUntil = now + INVINCIBILITY_DURATION;
           createExplosion(player.x + player.width / 2, player.y + player.height / 2, '#ef4444', 30);
           triggerShake();
           
-          if (player.lives <= 0) {
+          if (player.hp <= 0) {
             setGameState('GAMEOVER');
           }
         }
@@ -901,10 +1284,11 @@ export default function App() {
                 if (next === 5) setCurrentRealm('VOID');
                 if (next === 10) setCurrentRealm('ABYSS');
 
-                // Lottery Ticket Award - ONLY in NIGHTMARE mode
-                if (next === 20 && difficulty === 'NIGHTMARE') {
-                  setTickets(prev => prev + 1);
-                  unlockAchievement('survivor');
+                // Lottery Ticket Award - HARD mode rewards
+                if (difficulty === 'HARD') {
+                  if (next >= 15) {
+                    setTickets(prev => prev + 1);
+                  }
                 }
 
                 return next;
@@ -1003,11 +1387,17 @@ export default function App() {
         }
       }
       
-      // Subtle Calligraphy Seal (Red)
-      ctx.fillStyle = 'rgba(185, 28, 28, 0.2)';
-      ctx.fillRect(CANVAS_WIDTH - 60, 40, 30, 30);
-      ctx.strokeStyle = 'rgba(185, 28, 28, 0.4)';
-      ctx.strokeRect(CANVAS_WIDTH - 60, 40, 30, 30);
+      // Artistic Calligraphy Seal (Red) - Enhanced visibility
+      ctx.fillStyle = '#b91c1c';
+      ctx.fillRect(CANVAS_WIDTH - 70, 40, 40, 40);
+      ctx.strokeStyle = '#fca5a5';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(CANVAS_WIDTH - 70, 40, 40, 40);
+      // Seal character placeholder
+      ctx.fillStyle = '#fca5a5';
+      ctx.font = 'bold 20px serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('天', CANVAS_WIDTH - 50, 68);
     } else if (bgType === 'CRYSTAL') {
       ctx.fillStyle = '#0f172a';
       ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
@@ -1169,6 +1559,15 @@ export default function App() {
         } else if (shape === 'DRAGON') {
           ctx.font = `${b.width * 3}px serif`;
           ctx.fillText('🔥', -b.width, b.width);
+        } else if (shape === 'WIND_GUST') {
+          ctx.strokeStyle = bColor;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          for(let i=0; i<3; i++) {
+            const r = b.width * (1 + i*0.5);
+            ctx.arc(0, i*5, r, Math.PI * 0.2, Math.PI * 0.8);
+          }
+          ctx.stroke();
         }
       } else {
         // Varied Enemy Bullets (Distinct from background)
@@ -1207,6 +1606,24 @@ export default function App() {
     });
     ctx.shadowBlur = 0;
 
+    // Draw Bombs
+    bombsRef.current.forEach(b => {
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = '#facc15';
+      ctx.fillStyle = '#facc15';
+      ctx.beginPath();
+      ctx.arc(0, 0, 8, 0, Math.PI * 2);
+      ctx.fill();
+      // Core
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(-2, -2, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+
     // Draw Enemies (Complex Skins)
     enemiesRef.current.forEach(e => {
       ctx.fillStyle = e.color;
@@ -1219,7 +1636,20 @@ export default function App() {
       // Enemy Core
       ctx.beginPath();
       if (e.type === 'TANK') {
-        ctx.roundRect(-e.width / 2, -e.height / 2, e.width, e.height, 10);
+        const r = 10;
+        const w = e.width;
+        const h = e.height;
+        const x = -w/2;
+        const y = -h/2;
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
         // Armor plates
         ctx.strokeStyle = 'rgba(255,255,255,0.2)';
         ctx.strokeRect(-e.width/3, -e.height/3, 2*e.width/3, 2*e.height/3);
@@ -1366,12 +1796,25 @@ export default function App() {
           // Flame particles
           ctx.shadowBlur = 30;
           ctx.shadowColor = '#f97316';
+        } else if (activeSkin.dynamicEffect === 'STORM') {
+          ctx.fillStyle = activeSkin.color;
+          // Swirling wind particles
+          for(let i=0; i<6; i++) {
+            const r = 20 + Math.sin(time/12 + i)*12;
+            const ang = time/6 + i*Math.PI*2/6;
+            ctx.beginPath();
+            ctx.arc(Math.cos(ang)*r, Math.sin(ang)*r, 4, 0, Math.PI*2);
+            ctx.fill();
+          }
         } else if (activeSkin.dynamicEffect === 'GLOSS') {
           const grad = ctx.createLinearGradient(-player.width, -player.height, player.width, player.height);
           const offset = (time * 3) % 200 / 100 - 1;
-          grad.addColorStop(Math.max(0, offset), activeSkin.color);
-          grad.addColorStop(Math.min(1, offset + 0.2), '#fff');
-          grad.addColorStop(Math.min(1, offset + 0.4), activeSkin.color);
+          const c1 = Math.max(0, Math.min(1, offset));
+          const c2 = Math.max(0, Math.min(1, offset + 0.2));
+          const c3 = Math.max(0, Math.min(1, offset + 0.4));
+          grad.addColorStop(c1, activeSkin.color);
+          grad.addColorStop(c2, '#fff');
+          grad.addColorStop(c3, activeSkin.color);
           ctx.fillStyle = grad;
         } else {
           const bodyGrad = ctx.createLinearGradient(0, -player.height/2, 0, player.height/2);
@@ -1462,6 +1905,25 @@ export default function App() {
           // Horns
           ctx.fillRect(-player.width/2, -player.height/2, 5, 15);
           ctx.fillRect(player.width/2 - 5, -player.height/2, 5, 15);
+        } else if (activeSkin.shape === 'BULLET_SHIP') {
+          // Bullet shaped ship
+          ctx.moveTo(0, -player.height * 0.8);
+          ctx.quadraticCurveTo(player.width/2, -player.height/2, player.width/2, player.height/2);
+          ctx.lineTo(-player.width/2, player.height/2);
+          ctx.quadraticCurveTo(-player.width/2, -player.height/2, 0, -player.height * 0.8);
+          ctx.closePath();
+          // Fins
+          ctx.fillRect(-player.width/2 - 5, player.height/4, 5, player.height/4);
+          ctx.fillRect(player.width/2, player.height/4, 5, player.height/4);
+        } else if (activeSkin.shape === 'WIND_SPIRIT') {
+          // Swirling wind spirit
+          ctx.beginPath();
+          for(let i=0; i<5; i++) {
+            const r = (player.width/2) * (1 - i*0.2);
+            const angle = time/10 + i;
+            ctx.arc(Math.sin(angle)*5, Math.cos(angle)*5, r, 0, Math.PI * 1.5);
+          }
+          ctx.stroke();
         } else {
           ctx.moveTo(0, -player.height / 2);
           ctx.lineTo(-player.width / 2, player.height / 2);
@@ -1470,28 +1932,112 @@ export default function App() {
         }
         ctx.fill();
 
-        // Patterns (Porcelain, Gemstone)
-        if (activeSkin.pattern === 'PORCELAIN') {
-          ctx.strokeStyle = '#2563eb';
-          ctx.lineWidth = 1;
-          for(let i=0; i<3; i++) {
-            ctx.beginPath();
-            ctx.arc(0, 0, 5 + i*5, 0, Math.PI*2);
-            ctx.stroke();
-          }
-        } else if (activeSkin.pattern === 'GEMSTONE') {
-          ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-          ctx.lineWidth = 1;
+        // Chinese Patterns & Textures
+        if (activeSkin.pattern && activeSkin.pattern !== 'NONE') {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+          ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.moveTo(-player.width/2, -player.height/2);
-          ctx.lineTo(player.width/2, player.height/2);
-          ctx.moveTo(player.width/2, -player.height/2);
-          ctx.lineTo(-player.width/2, player.height/2);
+
+          if (activeSkin.pattern === 'CLOUD') {
+            // Swirling auspicious clouds - More organic
+            for(let i=0; i<3; i++) {
+              const ox = -12 + i*12;
+              const oy = 8;
+              ctx.beginPath();
+              ctx.arc(ox, oy, 7, Math.PI * 0.8, Math.PI * 2.2);
+              ctx.arc(ox + 6, oy - 4, 5, Math.PI * 1.2, Math.PI * 2.8);
+              ctx.stroke();
+            }
+          } else if (activeSkin.pattern === 'DRAGON') {
+            // Dragon scales - More detailed
+            for(let i=0; i<5; i++) {
+              for(let j=0; j<4; j++) {
+                const sx = -18 + i*9;
+                const sy = -12 + j*7;
+                ctx.beginPath();
+                ctx.moveTo(sx, sy);
+                ctx.quadraticCurveTo(sx + 4, sy - 6, sx + 9, sy);
+                ctx.stroke();
+              }
+            }
+          } else if (activeSkin.pattern === 'PHOENIX') {
+            // Stylized feathers - Flowing
+            for(let i=0; i<5; i++) {
+              const ang = -0.8 + i*0.4;
+              ctx.save();
+              ctx.rotate(ang);
+              ctx.beginPath();
+              ctx.moveTo(0, 0);
+              ctx.bezierCurveTo(10, -15, 25, -5, 30, 10);
+              ctx.stroke();
+              ctx.restore();
+            }
+          } else if (activeSkin.pattern === 'LOTUS') {
+            // Lotus petals - Layered
+            for(let i=0; i<12; i++) {
+              const ang = (i * Math.PI * 2) / 12;
+              ctx.save();
+              ctx.rotate(ang);
+              ctx.beginPath();
+              ctx.ellipse(0, 10, 5, 12, 0, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.restore();
+            }
+          } else if (activeSkin.pattern === 'WATERCOLOR') {
+            // Ink wash blobs - Artistic
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+            for(let i=0; i<6; i++) {
+              const rx = Math.sin(time/20 + i) * 15;
+              const ry = Math.cos(time/20 + i) * 15;
+              ctx.beginPath();
+              ctx.arc(rx, ry, 10 + Math.sin(time/12 + i)*6, 0, Math.PI*2);
+              ctx.fill();
+            }
+          } else if (activeSkin.pattern === 'PORCELAIN') {
+            // Blue and white floral swirls - Fine lines
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 0.8;
+            for(let i=0; i<6; i++) {
+              const ang = (i * Math.PI * 2) / 6;
+              ctx.save();
+              ctx.rotate(ang);
+              ctx.beginPath();
+              ctx.moveTo(8, 8);
+              ctx.bezierCurveTo(20, 0, 20, 25, 8, 20);
+              ctx.stroke();
+              ctx.restore();
+            }
+          } else if (activeSkin.pattern === 'GEMSTONE') {
+            // Crystalline facets - Sharp
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(-20, -10); ctx.lineTo(20, -10);
+            ctx.moveTo(-15, -20); ctx.lineTo(-15, 20);
+            ctx.moveTo(15, -20); ctx.lineTo(15, 20);
+            ctx.moveTo(-20, 10); ctx.lineTo(20, 10);
+            ctx.stroke();
+          } else if (activeSkin.pattern === 'WATERFALL') {
+            // Flowing water lines - Dynamic
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.lineWidth = 1;
+            for(let i=0; i<7; i++) {
+              const x = -18 + i*6;
+              const offset = (time/4 + i*8) % 35;
+              ctx.beginPath();
+              ctx.moveTo(x, -20 + offset);
+              ctx.lineTo(x, -8 + offset);
+              ctx.stroke();
+            }
+          }
+          
           ctx.stroke();
+          ctx.restore();
         }
 
-        // Waterfall/Watercolor Overlays
-        if (activeSkin.dynamicEffect === 'WATERCOLOR') {
+        // Waterfall/Watercolor Overlays (Dynamic Effects)
+        if (activeSkin.dynamicEffect === 'WATERCOLOR' && activeSkin.pattern !== 'WATERCOLOR') {
           ctx.fillStyle = '#fff';
           ctx.globalAlpha = 0.3;
           for(let i=0; i<5; i++) {
@@ -1525,29 +2071,6 @@ export default function App() {
         ctx.beginPath();
         ctx.ellipse(-3, -8, 3, 5, 0.5, 0, Math.PI * 2);
         ctx.fill();
-
-        // Chinese Patterns
-        if (activeSkin.pattern && activeSkin.pattern !== 'NONE') {
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          if (activeSkin.pattern === 'CLOUD') {
-            ctx.arc(-10, 5, 5, 0, Math.PI * 2);
-            ctx.arc(-5, 5, 5, 0, Math.PI * 2);
-            ctx.arc(0, 5, 5, 0, Math.PI * 2);
-          } else if (activeSkin.pattern === 'DRAGON') {
-            ctx.moveTo(-15, 10);
-            ctx.quadraticCurveTo(0, -10, 15, 10);
-          } else if (activeSkin.pattern === 'PHOENIX') {
-            ctx.moveTo(-10, 0);
-            ctx.lineTo(0, -15);
-            ctx.lineTo(10, 0);
-          } else if (activeSkin.pattern === 'LOTUS') {
-            ctx.moveTo(0, 0);
-            ctx.ellipse(0, 5, 5, 10, 0, 0, Math.PI * 2);
-          }
-          ctx.stroke();
-        }
 
         // Engine Glow
         const glowSize = 15 + Math.random() * 10;
@@ -1593,23 +2116,78 @@ export default function App() {
     ctx.restore();
   }, [activeSkin, isShaking, bgType]);
 
+  const updateRef = useRef(update);
+  const drawRef = useRef(draw);
+  const activeSkinRef = useRef(activeSkin);
+
+  useEffect(() => {
+    updateRef.current = update;
+  }, [update]);
+
+  useEffect(() => {
+    drawRef.current = draw;
+  }, [draw]);
+
+  useEffect(() => {
+    activeSkinRef.current = activeSkin;
+  }, [activeSkin]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      keysRef.current.add(e.key);
-      if (e.key === 'p' || e.key === 'P') {
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      keysRef.current.add(key);
+      if (key === 'p') {
         setGameState(prev => prev === 'PLAYING' ? 'PAUSED' : (prev === 'PAUSED' ? 'PLAYING' : prev));
       }
     };
-    const handleKeyUp = (e: KeyboardEvent) => keysRef.current.delete(e.key);
+    const handleKeyUp = (e: KeyboardEvent) => {
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      keysRef.current.delete(key);
+    };
+    
+    const handleMouseDown = (e: MouseEvent) => {
+      if (gameState !== 'PLAYING' || activeSkinRef.current.ability !== 'TARGETED_STRIKE') return;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // Check if clicked on an enemy
+      const target = enemiesRef.current.find(enemy => 
+        mouseX > enemy.x && mouseX < enemy.x + enemy.width &&
+        mouseY > enemy.y && mouseY < enemy.y + enemy.height
+      );
+
+      if (target) {
+        const player = playerRef.current;
+        const bWidth = activeSkinRef.current.bulletWidth;
+        // Fire a fast bullet towards the target
+        const dx = target.x + target.width / 2 - (player.x + player.width / 2);
+        const dy = target.y + target.height / 2 - player.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const speed = BULLET_SPEED * 2.5;
+        bulletsRef.current.push({
+          x: player.x + player.width / 2,
+          y: player.y,
+          vx: (dx / dist) * speed,
+          vy: (dy / dist) * speed,
+          isPlayer: true,
+          width: bWidth * 1.5
+        });
+        createExplosion(player.x + player.width / 2, player.y, '#fff', 5);
+      }
+    };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('mousedown', handleMouseDown);
     
     const gameLoop = () => {
       if (gameState === 'PLAYING') {
-        update();
+        updateRef.current();
       }
-      draw();
+      drawRef.current();
       requestRef.current = requestAnimationFrame(gameLoop);
     };
     
@@ -1618,9 +2196,10 @@ export default function App() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('mousedown', handleMouseDown);
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
-  }, [gameState, update, draw]);
+  }, [gameState]);
 
   // Touch Controls for Mobile
   const handleTouch = (e: React.TouchEvent) => {
@@ -1641,10 +2220,10 @@ export default function App() {
     
     if (tickets > 0) {
       setTickets(prev => prev - 1);
-    } else if (credits >= 500) {
-      setCredits(prev => prev - 500);
+    } else if (credits >= 10000) {
+      setCredits(prev => prev - 10000);
     } else {
-      alert('积分不足 (需要 500 积分)');
+      alert('惹货积分不足 (需要 10000 惹货积分)');
       return;
     }
 
@@ -1697,14 +2276,40 @@ export default function App() {
       {/* Sidebar - Instructions (Desktop Only) */}
       <aside className="hidden lg:flex w-80 flex-col p-8 border-r border-white/10 bg-black/20 backdrop-blur-xl">
         <div className="flex items-center gap-3 mb-8">
-          <Rocket className="w-8 h-8 text-blue-400" />
-          <h2 className="text-2xl font-bold tracking-tight">Tina星际先锋</h2>
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <Rocket className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold tracking-tight">Tina星际先锋</h2>
+            <p className="text-[10px] text-slate-500 font-medium uppercase tracking-widest">Ace Pilot Command</p>
+          </div>
+        </div>
+
+        {/* Profile Section */}
+        <div className="mb-8 p-4 rounded-2xl bg-white/5 border border-white/10 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-slate-800 border border-white/10 flex items-center justify-center overflow-hidden">
+            <img 
+              src={`https://api.dicebear.com/7.x/avataaars/svg?seed=yli49169`} 
+              alt="Profile"
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold truncate">yli49169@gmail.com</p>
+            <p className="text-[10px] text-blue-400 font-bold uppercase tracking-tighter">Elite Commander</p>
+          </div>
         </div>
 
         <div className="space-y-8">
           <div className="bg-white/5 p-4 rounded-xl border border-white/10">
-            <div className="text-xs text-slate-500 uppercase tracking-widest mb-1">可用积分 (Credits)</div>
+            <div className="text-xs text-slate-500 uppercase tracking-widest mb-1">可用惹货积分</div>
             <div className="text-2xl font-bold text-amber-400">{credits.toLocaleString()}</div>
+          </div>
+
+          <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+            <div className="text-xs text-slate-500 uppercase tracking-widest mb-1">拥有心币</div>
+            <div className="text-2xl font-bold text-blue-400">{tickets}</div>
           </div>
 
           <section>
@@ -1713,7 +2318,7 @@ export default function App() {
             </h3>
             <ul className="space-y-3 text-sm text-slate-300">
               <li className="flex justify-between"><span>击毁敌机</span> <span className="text-green-400">+100~300</span></li>
-              <li className="flex justify-between"><span>积分转化</span> <span className="text-amber-400">10% 分数</span></li>
+              <li className="flex justify-between"><span>惹货转化</span> <span className="text-amber-400">10% 分数</span></li>
               <li className="flex justify-between"><span>升级门槛</span> <span className="text-blue-400">每 1000 分</span></li>
             </ul>
           </section>
@@ -1747,7 +2352,7 @@ export default function App() {
                 </div>
                 <div>
                   <p className="text-sm font-medium">星际宝藏</p>
-                  <p className="text-xs text-slate-400">直接获得 100 积分</p>
+                  <p className="text-xs text-slate-400">直接获得 100 惹货积分</p>
                 </div>
               </div>
             </div>
@@ -1801,16 +2406,43 @@ export default function App() {
               </div>
             </div>
             <div className="flex flex-col items-end gap-3">
-              <div className="flex gap-1">
-                {[...Array(3)].map((_, i) => (
-                  <Heart 
-                    key={i} 
-                    className={`w-6 h-6 transition-colors duration-300 ${i < lives ? 'text-red-500 fill-red-500' : 'text-slate-800'}`} 
+              <div className="w-48">
+                <div className="flex justify-between text-[10px] font-bold text-red-400 mb-1">
+                  <span>HULL INTEGRITY (BLOOD)</span>
+                  <span>{Math.max(0, Math.floor(playerRef.current.hp))}%</span>
+                </div>
+                <div className="h-2 w-full bg-red-950/30 rounded-full overflow-hidden border border-red-500/20">
+                  <motion.div 
+                    initial={{ width: '100%' }}
+                    animate={{ width: `${Math.max(0, playerRef.current.hp)}%` }}
+                    className={`h-full transition-colors duration-500 ${playerRef.current.hp > 50 ? 'bg-red-500' : playerRef.current.hp > 20 ? 'bg-orange-500' : 'bg-red-700'}`}
                   />
-                ))}
+                </div>
               </div>
               <div className="px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/10 text-xs font-bold tracking-tighter">
                 {currentRealm} - LEVEL {level}
+              </div>
+            </div>
+          </div>
+
+          {/* HUD - Bottom Bar */}
+          <div className="absolute bottom-6 inset-x-6 flex justify-between items-end pointer-events-none z-10">
+            <div className="bg-black/40 backdrop-blur-md p-3 rounded-xl border border-white/10">
+              <div className="text-[8px] font-bold text-slate-500 uppercase tracking-widest mb-1">Level Progress</div>
+              <div className="h-1 w-32 bg-white/10 rounded-full overflow-hidden">
+                <motion.div 
+                  animate={{ width: `${(score % 1000) / 10}%` }}
+                  className="h-full bg-amber-500"
+                />
+              </div>
+            </div>
+            <div className="bg-black/40 backdrop-blur-md p-3 rounded-xl border border-white/10 flex items-center gap-3">
+              <div className="text-right">
+                <div className="text-[8px] font-bold text-slate-500 uppercase tracking-widest mb-1">Engine Core</div>
+                <div className="text-[10px] font-bold text-blue-400">STABLE</div>
+              </div>
+              <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                <Zap className="w-4 h-4 text-blue-400 animate-pulse" />
               </div>
             </div>
           </div>
@@ -1825,7 +2457,7 @@ export default function App() {
                 className="absolute inset-0 z-10 pointer-events-none border-4 border-red-500/50 flex items-center justify-center"
               >
                 <div className="bg-red-500/20 px-4 py-2 rounded-lg backdrop-blur-sm">
-                  <span className="text-red-500 font-bold text-sm">敌机逃脱！扣除积分</span>
+                  <span className="text-red-500 font-bold text-sm">敌机逃脱！扣除惹货积分</span>
                 </div>
               </motion.div>
             )}
@@ -1844,24 +2476,24 @@ export default function App() {
                   className="mb-12"
                 >
                   <Rocket className="w-16 h-16 text-red-500 mx-auto mb-6 animate-pulse" />
-                  <h1 className="text-5xl md:text-6xl font-black tracking-tighter mb-4 bg-gradient-to-b from-red-500 to-orange-600 bg-clip-text text-transparent">
-                    地狱先锋
+                  <h1 className="text-3xl md:text-4xl font-black tracking-tighter mb-4 bg-gradient-to-b from-blue-500 to-indigo-600 bg-clip-text text-transparent">
+                    星际战机
                   </h1>
-                  <p className="text-slate-400 max-w-xs mx-auto">
-                    在炼狱星域中生存。收集积分，解锁更强大的战机。
+                  <p className="text-slate-400 max-w-xs mx-auto text-sm">
+                    穿梭于星际之间，消灭敌机，保卫银河系。
                   </p>
                 </motion.div>
 
                 <div className="flex flex-col gap-4 w-full max-w-xs">
                   {/* Difficulty Selector */}
                   <div className="flex bg-white/5 p-1 rounded-xl border border-white/10 mb-2 overflow-x-auto no-scrollbar">
-                    {(['EASY', 'NORMAL', 'HARD', 'NIGHTMARE', 'COMPETITIVE'] as const).map(d => (
+                    {(['EASY', 'NORMAL', 'ADVANCED', 'EXPERT', 'HARD'] as const).map(d => (
                       <button
                         key={d}
                         onClick={() => setDifficulty(d)}
                         className={`flex-1 py-2 px-3 text-[8px] font-bold rounded-lg transition-all whitespace-nowrap ${difficulty === d ? 'bg-red-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
                       >
-                        {d === 'COMPETITIVE' ? '竞技模式' : d}
+                        {d === 'EASY' ? '简单' : d === 'NORMAL' ? '普通' : d === 'ADVANCED' ? '进阶' : d === 'EXPERT' ? '专家' : '困难'}
                       </button>
                     ))}
                   </div>
@@ -1885,7 +2517,7 @@ export default function App() {
                     onClick={startLottery}
                     className={getButtonStyle("w-full py-3 bg-amber-500 text-slate-950 rounded-xl font-black text-sm flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(245,158,11,0.4)]")}
                   >
-                    <Ticket className="w-4 h-4" /> {tickets > 0 ? `幸运转盘 (拥有 ${tickets} 张券)` : '积分抽奖 (500 积分)'}
+                    <Ticket className="w-4 h-4" /> {tickets > 0 ? `幸运转盘 (拥有 ${tickets} 个心币)` : '惹货积分抽奖 (10000 惹货积分)'}
                   </motion.button>
 
                   <motion.button
@@ -1896,7 +2528,7 @@ export default function App() {
                   >
                     <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-20 group-hover:opacity-40 transition-opacity" />
                     <span className="relative z-10 flex items-center justify-center gap-3 tracking-widest">
-                      进入炼狱 <Play className="w-6 h-6 fill-current" />
+                      开始游戏 <Play className="w-6 h-6 fill-current" />
                     </span>
                   </motion.button>
 
@@ -1926,12 +2558,53 @@ export default function App() {
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2 bg-amber-500/20 px-4 py-2 rounded-xl border border-amber-500/30">
                       <Trophy className="w-4 h-4 text-amber-400" />
-                      <span className="font-bold text-amber-400">{credits}</span>
+                      <span className="font-bold text-amber-400">{credits} 惹货积分</span>
                     </div>
                     <div className="flex items-center gap-2 bg-blue-500/20 px-4 py-2 rounded-xl border border-blue-500/30">
                       <Ticket className="w-4 h-4 text-blue-400" />
-                      <span className="font-bold text-blue-400">{tickets}</span>
+                      <span className="font-bold text-blue-400">{tickets} 心币</span>
                     </div>
+                  </div>
+                </div>
+
+                {/* Ticket Shop */}
+                <div className="mb-6 p-4 bg-amber-500/10 rounded-2xl border border-amber-500/20 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
+                      <Ticket className="w-6 h-6 text-amber-500" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-sm">心币商店</p>
+                      <p className="text-[10px] text-slate-500">购买心币以抽取神话级战机</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => {
+                        if (credits >= 5000) {
+                          setCredits(prev => prev - 5000);
+                          setTickets(prev => prev + 1);
+                        } else {
+                          alert('惹货积分不足');
+                        }
+                      }}
+                      className="px-4 py-2 bg-amber-500 text-slate-950 rounded-xl font-black text-[10px] hover:bg-amber-400 transition-all"
+                    >
+                      5000 惹货积分 / 1心币
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (credits >= 45000) {
+                          setCredits(prev => prev - 45000);
+                          setTickets(prev => prev + 10);
+                        } else {
+                          alert('惹货积分不足');
+                        }
+                      }}
+                      className="px-4 py-2 bg-amber-600 text-white rounded-xl font-black text-[10px] hover:bg-amber-500 transition-all"
+                    >
+                      45000 惹货积分 / 10心币
+                    </button>
                   </div>
                 </div>
 
@@ -1954,8 +2627,9 @@ export default function App() {
                       key={skin.id}
                       className={`p-4 rounded-2xl border transition-all ${activeSkinId === skin.id ? 'bg-blue-500/20 border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.2)]' : 'bg-white/5 border-white/10'} ${skin.isLotteryExclusive && !skin.unlocked ? 'opacity-60 grayscale' : ''}`}
                     >
-                      <div className="flex justify-between items-center">
-                        <div>
+                      <div className="flex gap-4 items-center">
+                        <SkinPreview skin={skin} size={80} onZoom={setZoomedSkin} />
+                        <div className="flex-1">
                           <div className="flex items-center gap-2 mb-1">
                             <h3 className="font-bold text-lg">{skin.name}</h3>
                             <span className={`text-[10px] px-2 py-0.5 rounded-full font-black ${
@@ -1973,7 +2647,10 @@ export default function App() {
                               <span className="text-[8px] px-2 py-0.5 rounded-full font-bold bg-white/10 text-white border border-white/20">
                                 {skin.dynamicEffect === 'WATERFALL' ? '瀑布特效' : 
                                  skin.dynamicEffect === 'WATERCOLOR' ? '水彩特效' : 
-                                 skin.dynamicEffect === 'CRYSTAL' ? '晶体特效' : '霓虹脉冲'}
+                                 skin.dynamicEffect === 'CRYSTAL' ? '晶体特效' : 
+                                 skin.dynamicEffect === 'FLAME' ? '火焰特效' :
+                                 skin.dynamicEffect === 'GLOSS' ? '光泽特效' :
+                                 skin.dynamicEffect === 'STORM' ? '风暴特效' : '霓虹脉冲'}
                               </span>
                             )}
                             {skin.isLotteryExclusive && (
@@ -1991,7 +2668,9 @@ export default function App() {
                                 特技: {skin.ability === 'BOMB' ? '自爆弹 (范围伤害)' : 
                                        skin.ability === 'SHIELD_REFLECT' ? '防御战术 (护盾反弹)' : 
                                        skin.ability === 'TIME_SLOW' ? '时空扭曲 (敌机减速)' : 
-                                       skin.ability === 'CHAIN_SHOT' ? '连锁射击 (弹射)' : '幽灵闪避 (概率免疫)'}
+                                       skin.ability === 'CHAIN_SHOT' ? '连锁射击 (弹射)' : 
+                                       skin.ability === 'TARGETED_STRIKE' ? '精准打击 (点击敌机发射)' :
+                                       skin.ability === 'PHANTOM' ? '幽灵闪避 (概率免疫)' : '无'}
                               </span>
                             )}
                             {skin.hasDualShip && <span className="text-red-400 font-bold">双机并进</span>}
@@ -2006,7 +2685,7 @@ export default function App() {
                           </button>
                         ) : skin.isLotteryExclusive ? (
                           <div className="px-4 py-2 bg-slate-800 text-slate-500 rounded-xl text-[10px] font-bold border border-white/5">
-                            仅限抽奖
+                            仅限心币抽奖
                           </div>
                         ) : (
                           <button 
@@ -2019,7 +2698,7 @@ export default function App() {
                             disabled={credits < skin.price}
                             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${credits >= skin.price ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
                           >
-                            {skin.price} 积分
+                            {skin.price} 惹货积分
                           </button>
                         )}
                       </div>
@@ -2034,7 +2713,7 @@ export default function App() {
                       <div className="flex justify-between items-center">
                         <div>
                           <h3 className="font-bold text-lg">{bg.name}</h3>
-                          <p className="text-[10px] text-slate-400">场景主题</p>
+                          <p className="text-[10px] text-slate-400">场景环境皮肤</p>
                         </div>
                         {bg.unlocked ? (
                           <button 
@@ -2054,7 +2733,7 @@ export default function App() {
                             disabled={credits < bg.price}
                             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${credits >= bg.price ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
                           >
-                            {bg.price} 积分
+                            {bg.price} 惹货积分
                           </button>
                         )}
                       </div>
@@ -2089,7 +2768,7 @@ export default function App() {
                             disabled={credits < btn.price}
                             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${credits >= btn.price ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
                           >
-                            {btn.price} 积分
+                            {btn.price} 惹货积分
                           </button>
                         )}
                       </div>
@@ -2236,7 +2915,7 @@ export default function App() {
                   >
                     {[...Array(8)].map((_, i) => (
                       <div 
-                        key={i}
+                        key={`lottery-segment-${i}`}
                         className="absolute top-0 left-1/2 w-1 h-1/2 bg-white/10 origin-bottom"
                         style={{ transform: `translateX(-50%) rotate(${i * 45}deg)` }}
                       />
@@ -2308,6 +2987,14 @@ export default function App() {
                   <div className="text-xs text-slate-400">{lastAchievement.description}</div>
                 </div>
               </motion.div>
+            )}
+          </AnimatePresence>
+          <AnimatePresence>
+            {zoomedSkin && (
+              <SkinZoomModal 
+                skin={zoomedSkin} 
+                onClose={() => setZoomedSkin(null)} 
+              />
             )}
           </AnimatePresence>
         </motion.div>
