@@ -1,5 +1,5 @@
 {
-  "name": "星际战机",
-  "description": "一款视觉效果出色的太空战机射击游戏，具有多种敌机、道具系统和成就系统。",
+  "name": "ColorChallenge",
+  "description": "Color Sensitivity Challenge — A web-based game designed for art students. Spot the one subtly different color among a 5×5 grid of nearly identical hues! Difficulty increases with each correct answer. Track your score and time in real-time, and learn through visual explanations of color differences.",
   "requestFramePermissions": []
 }
